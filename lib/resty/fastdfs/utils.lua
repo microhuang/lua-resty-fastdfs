@@ -1,8 +1,9 @@
 -- Copyright (C) 2013 Azure Wang
+--local bit = require("bit") 
 local strfind = string.find
 local strsub  = string.sub
 local strbyte = string.byte
-local strrep  = string.rep
+--local strrep  = string.rep
 local strchar = string.char
 local strrep  = string.rep
 local band    = bit.band

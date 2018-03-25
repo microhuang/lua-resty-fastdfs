@@ -2,6 +2,7 @@
 local utils   = require('resty.fastdfs.utils')
 local strip_string = utils.strip_string
 local fix_string   = utils.fix_string
+local read_int = utils.read_int
 local buf2int      = utils.buf2int
 local int2buf      = utils.int2buf
 local copy_sock    = utils.copy_sock
@@ -12,6 +13,8 @@ local string = string
 local table  = table
 local setmetatable = setmetatable
 local error = error
+local pairs = pairs
+
 
 module(...)
 
@@ -23,15 +26,20 @@ local FDFS_FILE_PREFIX_MAX_LEN = 16
 local FDFS_PROTO_CMD_QUIT = 82
 local STORAGE_PROTO_CMD_UPLOAD_FILE = 11
 local STORAGE_PROTO_CMD_DELETE_FILE = 12
--- local STORAGE_PROTO_CMD_SET_METADATA = 13
+local STORAGE_PROTO_CMD_SET_METADATA = 13
 local STORAGE_PROTO_CMD_DOWNLOAD_FILE = 14
--- local STORAGE_PROTO_CMD_GET_METADATA = 15
+local STORAGE_PROTO_CMD_GET_METADATA = 15
 local STORAGE_PROTO_CMD_UPLOAD_SLAVE_FILE = 21
 local STORAGE_PROTO_CMD_QUERY_FILE_INFO = 22
 local STORAGE_PROTO_CMD_UPLOAD_APPENDER_FILE = 23
 local STORAGE_PROTO_CMD_APPEND_FILE = 24
 local STORAGE_PROTO_CMD_MODIFY_FILE = 34
 local STORAGE_PROTO_CMD_TRUNCATE_FILE = 36
+
+local FDFS_GROUP_NAME_MAX_LEN = 16
+local FDFS_RECORD_SEPERATOR = '='
+local FDFS_FIELD_SEPERATOR = ';'
+local STORAGE_SET_METADATA_FLAG_OVERWRITE = 'O'
 
 local mt = { __index = _M }
 
@@ -173,6 +181,71 @@ function read_download_result_cb(self, cb)
         cb(data)
     end
     return true
+end
+
+local function pack_meta_data(meta_data)
+    local meta_str = ''
+    for k, v in pairs(meta_data) do
+        meta_str = meta_str .. k .. FDFS_RECORD_SEPERATOR .. v .. FDFS_FIELD_SEPERATOR
+    end
+    return string.sub(meta_str, 0, string.len(meta_str) - 1)
+end
+
+function set_metadata(self, group_name, file_name, meta_data, op_flag)
+    if not group_name then
+        return nil, "not group_name"
+    end
+    if not file_name then
+        return nil, "not file_name"
+    end
+    local out = {}
+    -- header
+    local meta_str = pack_meta_data(meta_data)
+    --    ngx.log(ngx.ALERT,'meta_str: '..meta_str..', length: '..string.len(meta_str))
+    local body_len = FDFS_PROTO_PKG_LEN_SIZE + FDFS_PROTO_PKG_LEN_SIZE + 1 + FDFS_GROUP_NAME_MAX_LEN + string.len(file_name) + string.len(meta_str)
+    --    ngx.log(ngx.ALERT,'body_len: '..body_len)
+    table.insert(out, int2buf(body_len))
+    table.insert(out, string.char(STORAGE_PROTO_CMD_SET_METADATA))
+    table.insert(out, "\00")
+
+    --body
+    -- file name
+    table.insert(out, int2buf(string.len(file_name)))
+    table.insert(out, int2buf(string.len(meta_str)))
+    table.insert(out, STORAGE_SET_METADATA_FLAG_OVERWRITE)
+    table.insert(out, fix_string(group_name, 16))
+    table.insert(out, file_name)
+    table.insert(out, meta_str)
+
+    -- send request
+    local ok, err = self:send_request(out)
+    if not ok then
+        return nil, err
+    end
+    return self:read_update_result("set_metadata")
+end
+
+function get_metadata(self, group_name, file_name)
+    if not group_name then
+        return nil, "not group_name"
+    end
+    if not file_name then
+        return nil, "not file_name"
+    end
+    local out = {}
+    table.insert(out, int2buf(16 + string.len(file_name)))
+    table.insert(out, string.char(STORAGE_PROTO_CMD_GET_METADATA))
+    table.insert(out, "\00")
+    -- group name
+    table.insert(out, fix_string(group_name, 16))
+    -- file name
+    table.insert(out, file_name)
+    -- send request
+    local ok, err = self:send_request(out)
+    if not ok then
+        return nil, err
+    end
+    return self:read_download_result("get_metadata")
 end
 
 -- build upload method
